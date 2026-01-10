@@ -34,10 +34,10 @@ function getWebviewHtml(
   markdown: string
 ): string {
   const nonce = createNonce();
+  // Safe serialization of content
   const content = JSON.stringify(markdown);
 
-  // Simple extraction of date from markdown for the header if present
-  // Matches "생성일: YYYY-..."
+  // Simple extraction of date
   const dateMatch = markdown.match(/생성일: (.*)/);
   const reportDate = dateMatch ? dateMatch[1].trim() : new Date().toISOString();
 
@@ -46,11 +46,12 @@ function getWebviewHtml(
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline' https:; script-src 'nonce-${nonce}' https:;" />
+  <!-- Allow scripts from unpkg for marked.js, and inline styles/scripts -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline' https:; script-src 'nonce-${nonce}' https: 'unsafe-eval';" />
   <title>DebtCrasher Report</title>
   <style>
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       margin: 0;
       padding: 0;
       background: #eef2f5; 
@@ -103,7 +104,7 @@ function getWebviewHtml(
     }
     .page {
       width: 100%;
-      max-width: 800px; /* A4 width approx, readable line length */
+      max-width: 800px; 
       background: #ffffff;
       box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
       border-radius: 4px;
@@ -111,73 +112,114 @@ function getWebviewHtml(
       box-sizing: border-box;
       min-height: 800px;
     }
-
-    /* Markdown Styles */
-    .markdown-body {
-        line-height: 1.6;
-        font-size: 15px;
+    /* Notion-like Styles */
+    .markdown-body { 
+        line-height: 1.7; 
+        font-size: 16px; 
+        color: #37352f;
     }
-    .markdown-body h1 { border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; margin-top: 0; }
-    .markdown-body h2 { margin-top: 24px; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }
-    .markdown-body blockquote { border-left: 4px solid #dfe2e5; padding-left: 1rem; color: #6a737d; }
-    .markdown-body code { background: rgba(27,31,35,0.05); padding: 0.2em 0.4em; border-radius: 3px; font-size: 85%; font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace; }
-    .markdown-body pre { background: #f6f8fa; padding: 16px; overflow: auto; border-radius: 6px; }
-    .markdown-body pre code { background: transparent; padding: 0; }
+    .markdown-body h1 { 
+        font-size: 2.2em;
+        font-weight: 700;
+        margin-bottom: 0.5em;
+        border-bottom: none;
+    }
+    .markdown-body h2 { 
+        font-size: 1.5em;
+        font-weight: 600;
+        margin-top: 1.5em;
+        margin-bottom: 0.5em;
+        border-bottom: 1px solid #efefef;
+        padding-bottom: 8px;
+    }
+    .markdown-body h3 {
+        font-size: 1.25em;
+        font-weight: 600;
+        margin-top: 1.2em;
+        margin-bottom: 0.2em;
+    }
+    .markdown-body pre { 
+        background: #f7f6f3; 
+        padding: 16px; 
+        overflow: auto; 
+        border-radius: 3px; 
+        font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 14px;
+        color: #eb5757;
+    }
+    .markdown-body code { 
+        background: #f7f6f3; 
+        color: #eb5757;
+        padding: 0.2em 0.4em; 
+        border-radius: 3px; 
+        font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 85%;
+    }
+    .markdown-body blockquote {
+        border-left: 3px solid currentcolor;
+        padding-left: 1em;
+        color: inherit;
+        opacity: 0.8;
+        margin-left: 0;
+        margin-right: 0;
+    }
+    .markdown-body hr {
+        height: 1px;
+        background-color: #efefef;
+        border: none;
+        margin: 2em 0;
+    }
+    .toolbar-container {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, "Apple Color Emoji", Arial, sans-serif, "Segoe UI Emoji", "Segoe UI Symbol";
+    }
+    .error-message { color: red; padding: 20px; text-align: center; }
   </style>
 </head>
 <body>
-  <div id="root"></div>
-  <script nonce="${nonce}" src="https://unpkg.com/react@18/umd/react.development.js"></script>
-  <script nonce="${nonce}" src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-  <script nonce="${nonce}" src="https://unpkg.com/marked/marked.min.js"></script>
+  <div class="toolbar-container">
+    <div class="toolbar-content">
+      <div>
+        <span class="toolbar-title">DebtCrasher Report</span>
+        <span class="toolbar-date">${reportDate}</span>
+      </div>
+      <button type="button" class="btn-export" id="btn-export">Export PDF</button>
+    </div>
+  </div>
+  
+  <div class="page-container">
+    <div class="page">
+      <div id="content" class="markdown-body">Loading...</div>
+    </div>
+  </div>
+
+  <!-- Use marked.js from CDN -->
+  <script nonce="${nonce}" src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  
   <script nonce="${nonce}">
     const markdown = ${content};
-    const reportDate = "${reportDate}";
     const vscode = acquireVsCodeApi();
 
-    const root = document.getElementById('root');
-    const { useState, useEffect } = React;
+    // Export button handler
+    document.getElementById('btn-export').addEventListener('click', () => {
+        vscode.postMessage({ command: 'exportPdf' });
+        // Try native print for immediate PDF save capability
+        window.print();
+    });
 
-    const App = () => {
-      
-      const handleExport = () => {
-          vscode.postMessage({ command: 'exportPdf' });
-      };
-
-      return React.createElement(
-        React.Fragment,
-        null,
-        React.createElement(
-          'div',
-          { className: 'toolbar-container' },
-          React.createElement(
-            'div',
-            { className: 'toolbar-content' },
-            React.createElement(
-                'div', 
-                null,
-                React.createElement('span', { className: 'toolbar-title' }, 'DebtCrasher Report'),
-                React.createElement('span', { className: 'toolbar-date' }, reportDate)
-            ),
-            React.createElement('button', { type: 'button', className: 'btn-export', onClick: handleExport }, 'Export PDF')
-          )
-        ),
-        React.createElement(
-          'div',
-          { className: 'page-container' },
-          React.createElement(
-             'div',
-             { className: 'page' },
-             React.createElement('div', {
-               className: 'markdown-body',
-               dangerouslySetInnerHTML: { __html: marked.parse(markdown) }
-             })
-          )
-        )
-      );
-    };
-
-    ReactDOM.createRoot(root).render(React.createElement(App));
+    // Render markdown
+    try {
+        if (typeof marked !== 'undefined') {
+            document.getElementById('content').innerHTML = marked.parse(markdown);
+        } else {
+            // Fallback if CDN fails (e.g. offline)
+            document.getElementById('content').innerHTML = 
+                '<div class="markdown-body"><p>⚠ Failed to load Markdown renderer (marked.js). Check your internet connection.</p><pre>' + 
+                markdown.replace(/</g, "&lt;") + 
+                '</pre></div>';
+        }
+    } catch (e) {
+        document.getElementById('content').innerHTML = '<div class="error-message">Error rendering report: ' + e + '</div>';
+    }
   </script>
 </body>
 </html>`;

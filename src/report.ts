@@ -42,55 +42,68 @@ export function generateReport(workspaceRoot: string): GeneratedReport {
   // Format Decisions
   const decisionsSection = decisionEvents.map((e) => {
     const dateStr = formatTimestamp(e.timestamp);
-    const contextStr = e.filePath ? `[${e.filePath}] ` : "";
-    return `- ${dateStr} — ${contextStr}${e.note}`;
+    const contextStr = e.filePath ? `파일: \`${e.filePath}\`` : "";
+    return `- **${dateStr}** ${contextStr}\n  > 💡 ${e.note}`;
   });
 
   // Format Bugfixes
   const bugfixesSection = bugfixEvents.map((e) => {
     const dateStr = formatTimestamp(e.timestamp);
-    const contextStr = e.filePath ? `[${e.filePath}] ` : "";
-    return `- ${dateStr} — ${contextStr}${e.note}`;
+    const contextStr = e.filePath ? `파일: \`${e.filePath}\`` : "";
+    return `- **${dateStr}** ${contextStr}\n  > 🐛 ${e.note}`;
   });
 
   const aiNotesSection = aiNoteEvents.map((e) => {
     const dateStr = formatTimestamp(e.timestamp);
     const filePath = e.filePath ?? "unknown";
+    const emojiMap: Record<string, string> = {
+        feature: "✨", refactor: "♻️", bugfix: "🔧", test: "🧪", chore: "🧹"
+    };
+    const emoji = emojiMap[e.workType] || "🤖";
+    
     const lines: string[] = [];
-    lines.push(`- [${e.workType}] (${dateStr}) ${filePath} — ${e.mainGoal}`);
-    lines.push(`  - changeSummary: ${e.changeSummary}`);
-    lines.push(`  - importantFunctions: ${e.importantFunctions.join(", ")}`);
+    lines.push(`### ${emoji} [${e.workType}] ${e.mainGoal}`);
+    lines.push(`**파일**: \`${filePath}\` | **일시**: ${dateStr}`);
+    lines.push(``);
+    lines.push(`> ${e.changeSummary}`);
+    lines.push(``);
+    if (e.importantFunctions && e.importantFunctions.length > 0) {
+        lines.push(`- **주요 함수**: \`${e.importantFunctions.join("`, `")}\``);
+    }
     if (e.risks) {
-      lines.push(`  - risks: ${e.risks}`);
+      lines.push(`- **⚠️ 리스크**: ${e.risks}`);
     }
     if (e.nextSteps) {
-      lines.push(`  - nextSteps: ${e.nextSteps}`);
+      lines.push(`- **⏭️ 다음 단계**: ${e.nextSteps}`);
     }
+    lines.push(`---`);
     return lines.join("\n");
   });
 
   const now = new Date().toISOString();
   
   const markdown = [
-    "# DebtCrasher Report",
+    "# 📑 DebtCrasher 리포트",
     "",
-    `생성일: ${now}`,
+    `**생성일**: ${formatTimestamp(now)}`,
     "",
-    "## 1. Timeline (File Saves)",
+    "---",
     "",
-    timelineSection.length ? timelineSection.join("\n") : "- No file save events recorded.",
+    "## 🤖 AI 개발 노트 (AI Notes)",
     "",
-    "## 2. Decisions",
+    aiNotesSection.length ? aiNotesSection.join("\n") : "_기록된 AI 노트가 없습니다._",
     "",
-    decisionsSection.length ? decisionsSection.join("\n") : "- No decisions recorded.",
+    "## 💡 의사결정 (Decisions)",
     "",
-    "## 3. Bugfixes",
+    decisionsSection.length ? decisionsSection.join("\n") : "_기록된 의사결정이 없습니다._",
     "",
-    bugfixesSection.length ? bugfixesSection.join("\n") : "- No bugfix notes recorded.",
+    "## 🐛 버그 수정 (Bugfixes)",
     "",
-    "## 4. AI Notes",
+    bugfixesSection.length ? bugfixesSection.join("\n") : "_기록된 버그 수정 내역이 없습니다._",
     "",
-    aiNotesSection.length ? aiNotesSection.join("\n") : "- No AI notes recorded."
+    "## 📅 전체 타임라인",
+    "",
+    timelineSection.length ? timelineSection.join("\n") : "_저장된 파일 이력이 없습니다._"
   ].join("\n");
 
   const reportPath = path.join(reportsDir, "report.md");

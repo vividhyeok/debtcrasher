@@ -43,17 +43,18 @@ const SYSTEM_PROMPT = [
 export async function generateAiNote(
   provider: AiProvider,
   apiKey: string,
+  model: string,
   request: AiNoteRequest
 ): Promise<AiNotePayload> {
   const prompt = buildUserPrompt(request);
 
   switch (provider) {
     case "openai":
-      return callOpenAi(apiKey, prompt);
+      return callOpenAi(apiKey, model, prompt);
     case "gemini":
-      return callGemini(apiKey, prompt);
+      return callGemini(apiKey, model, prompt);
     case "deepseek":
-      return callDeepSeek(apiKey, prompt);
+      return callDeepSeek(apiKey, model, prompt);
     default:
       throw new Error("Unsupported AI provider.");
   }
@@ -65,8 +66,13 @@ function buildUserPrompt(request: AiNoteRequest): string {
     : "(no recent file_save events)";
   const hintLine = request.userHint?.trim() ? request.userHint.trim() : "(none)";
 
+  // If workType is 'chore' (often default), instruct AI to infer it if possible
+  const workTypeContext = request.workType === 'chore' 
+    ? "workType: chore (please infer actual type if possible based on diff)" 
+    : `workType: ${request.workType}`;
+
   return [
-    `workType: ${request.workType}`,
+    workTypeContext,
     `filePath: ${request.filePath}`,
     `languageId: ${request.languageId}`,
     `userHint: ${hintLine}`,
@@ -77,9 +83,9 @@ function buildUserPrompt(request: AiNoteRequest): string {
   ].join("\n");
 }
 
-async function callOpenAi(apiKey: string, userPrompt: string): Promise<AiNotePayload> {
+async function callOpenAi(apiKey: string, model: string, userPrompt: string): Promise<AiNotePayload> {
   const body = {
-    model: "gpt-4o",
+    model: model || "gpt-4o-mini", // Fallback
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: userPrompt }
@@ -100,7 +106,8 @@ async function callOpenAi(apiKey: string, userPrompt: string): Promise<AiNotePay
   return parseAiNotePayload(content);
 }
 
-async function callGemini(apiKey: string, userPrompt: string): Promise<AiNotePayload> {
+async function callGemini(apiKey: string, model: string, userPrompt: string): Promise<AiNotePayload> {
+  const modelName = model || "gemini-1.5-flash"; // Fallback
   const body = {
     contents: [
       {
@@ -111,7 +118,7 @@ async function callGemini(apiKey: string, userPrompt: string): Promise<AiNotePay
   };
 
   const response = await postJson(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
     {
       "Content-Type": "application/json"
     },
@@ -122,9 +129,9 @@ async function callGemini(apiKey: string, userPrompt: string): Promise<AiNotePay
   return parseAiNotePayload(content);
 }
 
-async function callDeepSeek(apiKey: string, userPrompt: string): Promise<AiNotePayload> {
+async function callDeepSeek(apiKey: string, model: string, userPrompt: string): Promise<AiNotePayload> {
   const body = {
-    model: "deepseek-chat",
+    model: model || "deepseek-chat", // Fallback
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: userPrompt }

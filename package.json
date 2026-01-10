@@ -40,21 +40,50 @@
     "configuration": {
       "title": "DebtCrasher",
       "properties": {
-        "debtcrasher.ai.provider": {
-          "type": "string",
-          "enum": [
-            "none",
-            "openai",
-            "gemini",
-            "deepseek"
-          ],
-          "default": "none",
-          "description": "AI provider used to generate structured AI notes."
-        },
-        "debtcrasher.ai.apiKey": {
+        "debtcrasher.providers.openai.apiKey": {
           "type": "string",
           "default": "",
-          "description": "API key for the selected AI provider."
+          "description": "OpenAI API Key (Required if using OpenAI models)"
+        },
+        "debtcrasher.providers.gemini.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Google Gemini API Key (Required if using Gemini models)"
+        },
+        "debtcrasher.providers.deepseek.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "DeepSeek API Key (Required if using DeepSeek models)"
+        },
+        "debtcrasher.note.provider": {
+          "type": "string",
+          "enum": ["openai", "gemini", "deepseek"],
+          "default": "openai",
+          "description": "Provider for AI Note generation (optimized for speed/cost)"
+        },
+        "debtcrasher.note.model": {
+          "type": "string",
+          "default": "gpt-4o-mini",
+          "description": "Model for AI Note generation (e.g. gpt-4o-mini, gemini-1.5-flash)",
+          "markdownDescription": "Model for AI Note generation.\n\n**Recommended (Cost-Effective):**\n- OpenAI: `gpt-4o-mini`\n- Gemini: `gemini-1.5-flash`"
+        },
+        "debtcrasher.report.provider": {
+          "type": "string",
+          "enum": ["openai", "gemini", "deepseek"],
+          "default": "openai",
+          "description": "Provider for Report generation (optimized for quality)"
+        },
+        "debtcrasher.report.model": {
+          "type": "string",
+          "default": "gpt-4o",
+          "description": "Model for Report generation (e.g. gpt-4o, gemini-1.5-pro)",
+          "markdownDescription": "Model for Report generation.\n\n**Recommended (High Quality):**\n- OpenAI: `gpt-4o`\n- Gemini: `gemini-1.5-pro`"
+        },
+        "debtcrasher.autoGenerateOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically generate AI Notes on file save",
+          "markdownDescription": "Automatically generate AI Notes on file save. Uses the **Note** provider settings."
         }
       }
     }
