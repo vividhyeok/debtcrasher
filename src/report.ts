@@ -207,38 +207,15 @@ export async function exportReportPdf(
   workspaceRoot: string,
   markdown: string
 ): Promise<string> {
+  // Puppeteer removal: Using browser print in Webview is preferred for this extension.
+  // This function now just saves the HTML for manual use if needed.
   const { reportsDir } = ensureDirectories(workspaceRoot);
   const timestamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12);
-  const pdfPath = path.join(reportsDir, `report-${timestamp}.pdf`);
+  const htmlPath = path.join(reportsDir, `report-${timestamp}.html`);
   const html = buildReportHtml(markdown);
-
-  let puppeteer: any;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    puppeteer = require("puppeteer");
-  } catch (error) {
-    throw new Error("Puppeteer가 설치되지 않았습니다.");
-  }
-
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"]
-  });
-
-  try {
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "networkidle0" });
-    await page.pdf({
-      path: pdfPath,
-      format: "A4",
-      printBackground: true,
-      margin: { top: "20mm", bottom: "20mm", left: "16mm", right: "16mm" }
-    });
-  } finally {
-    await browser.close();
-  }
-
-  return pdfPath;
+  
+  fs.writeFileSync(htmlPath, html, "utf8");
+  return htmlPath;
 }
 
 /**

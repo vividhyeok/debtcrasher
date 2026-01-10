@@ -97,12 +97,19 @@ export function activate(context: vscode.ExtensionContext): void {
 
         openReportWebview(context, report.markdown, async () => {
           try {
-            const pdfPath = await exportReportPdf(workspaceRoot, report.markdown);
-            vscode.window.showInformationMessage(`DebtCrasher: PDF 저장 완료 - ${pdfPath}`);
+            const htmlPath = await exportReportPdf(workspaceRoot, report.markdown);
+            const selection = await vscode.window.showInformationMessage(
+              `리포트가 HTML로 저장되었습니다 (인쇄하여 PDF 저장 가능): ${htmlPath}`,
+              "파일 열기"
+            );
+            if (selection === "파일 열기") {
+              const uri = vscode.Uri.file(htmlPath);
+              vscode.env.openExternal(uri);
+            }
           } catch (error) {
             const message = error instanceof Error ? error.message : "Unknown error.";
             vscode.window.showErrorMessage(
-              `DebtCrasher: PDF 생성 실패. ${message} (웹뷰의 인쇄 기능을 이용해 주세요.)`
+              `DebtCrasher: Export failed. ${message}`
             );
           }
         });
