@@ -7,7 +7,9 @@
   "engines": {
     "vscode": "^1.87.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "activationEvents": [
     "onCommand:debtcrasher.recordDecision",
     "onCommand:debtcrasher.recordBugfix",
@@ -38,6 +40,7 @@
     "package": "vsce package"
   },
   "devDependencies": {
+    "@types/diff": "^7.0.2",
     "@types/node": "^20.11.16",
     "@types/vscode": "^1.87.0",
     "eslint": "^8.56.0",

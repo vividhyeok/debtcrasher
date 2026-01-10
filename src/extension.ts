@@ -31,7 +31,11 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      appendLogEvent(workspaceRoot, createTextEvent("decision", input));
+      // Pass active editor to capture file context if available
+      const activeEditor = vscode.window.activeTextEditor;
+      
+      const event = createTextEvent("decision", input, workspaceRoot, activeEditor);
+      appendLogEvent(workspaceRoot, event);
       vscode.window.showInformationMessage("DebtCrasher: Decision recorded.");
     }
   );
@@ -48,7 +52,11 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      appendLogEvent(workspaceRoot, createTextEvent("bugfix", input));
+      // Pass active editor to capture file context if available
+      const activeEditor = vscode.window.activeTextEditor;
+
+      const event = createTextEvent("bugfix", input, workspaceRoot, activeEditor);
+      appendLogEvent(workspaceRoot, event);
       vscode.window.showInformationMessage("DebtCrasher: Bugfix recorded.");
     }
   );
@@ -61,7 +69,8 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
 
-  const saveSubscription = vscode.workspace.onDidSaveTextDocument((document) => {
+  // Strategy: "Diff calculation based on previous save"
+  const saveSubscription = vscode.workspace.onDidSaveTextDocument((document: vscode.TextDocument) => {
     if (document.uri.scheme !== "file") {
       return;
     }
@@ -69,7 +78,8 @@ export function activate(context: vscode.ExtensionContext): void {
     appendLogEvent(workspaceRoot, event);
   });
 
-  const openSubscription = vscode.workspace.onDidOpenTextDocument((document) => {
+  // Strategy: "Diff calculation based on previous save" - cache initial content
+  const openSubscription = vscode.workspace.onDidOpenTextDocument((document: vscode.TextDocument) => {
     if (document.uri.scheme !== "file") {
       return;
     }

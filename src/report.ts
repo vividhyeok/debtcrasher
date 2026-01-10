@@ -1,11 +1,16 @@
 import * as fs from "fs";
 import * as path from "path";
-import { ensureDirectories, LogEvent } from "./logging";
+import { ensureDirectories, LogEvent, FileSaveEvent, DecisionEvent, BugfixEvent } from "./logging";
 
 export type GeneratedReport = {
   markdown: string;
   reportPath: string;
 };
+
+// -------------------------------------------------------------------------
+// Layer B - Narrative Report Layer
+// Reconstructs the development story from the structured logs (Layer A).
+// -------------------------------------------------------------------------
 
 export function generateReport(workspaceRoot: string): GeneratedReport {
   const { logsDir, reportsDir } = ensureDirectories(workspaceRoot);
@@ -26,55 +31,67 @@ export function generateReport(workspaceRoot: string): GeneratedReport {
       try {
         events.push(JSON.parse(line) as LogEvent);
       } catch {
-        // Skip malformed lines for MVP.
+        // Safe parsing: Skip malformed lines to prevent crashes
       }
     }
   }
 
-  const timeline = events
-    .filter((event) => event.type === "file_save")
-    .map((event) => {
-      const data = event.data as {
-        filePath?: string;
-        addedLines?: number;
-        removedLines?: number;
-        branch?: string | null;
-      };
-      const branch = data.branch ? ` (branch: ${data.branch})` : "";
-      return `- ${event.timestamp} • Saved ${data.filePath} (+${data.addedLines}/-${data.removedLines})${branch}`;
-    });
+  // Sort events by timestamp just in case
+  events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-  const decisions = events
-    .filter((event) => event.type === "decision")
-    .map((event) => {
-      const data = event.data as { message?: string };
-      return `- ${event.timestamp} • ${data.message}`;
-    });
+  const fileSaveEvents = events.filter((e): e is FileSaveEvent => e.type === "file_save");
+  const decisionEvents = events.filter((e): e is DecisionEvent => e.type === "decision");
+  const bugfixEvents = events.filter((e): e is BugfixEvent => e.type === "bugfix");
 
-  const bugfixes = events
-    .filter((event) => event.type === "bugfix")
-    .map((event) => {
-      const data = event.data as { message?: string };
-      return `- ${event.timestamp} • ${data.message}`;
-    });
+  // Format Timeline
+  const timelineSection = fileSaveEvents.map((e) => {
+    const branchInfo = e.branch ? `, branch: ${e.branch}` : "";
+    const dateStr = formatTimestamp(e.timestamp);
+    return `- ${dateStr} — \`${e.filePath}\` ( +${e.addedLines} / -${e.removedLines}${branchInfo} )`;
+  });
 
+  // Format Decisions
+  const decisionsSection = decisionEvents.map((e) => {
+    const dateStr = formatTimestamp(e.timestamp);
+    const contextStr = e.filePath ? `[${e.filePath}] ` : "";
+    return `- ${dateStr} — ${contextStr}${e.note}`;
+  });
+
+  // Format Bugfixes
+  const bugfixesSection = bugfixEvents.map((e) => {
+    const dateStr = formatTimestamp(e.timestamp);
+    const contextStr = e.filePath ? `[${e.filePath}] ` : "";
+    return `- ${dateStr} — ${contextStr}${e.note}`;
+  });
+
+  const now = new Date().toISOString();
+  
   const markdown = [
     "# DebtCrasher Report",
     "",
-    `Generated: ${new Date().toISOString()}`,
+    `생성일: ${now}`,
     "",
-    "## Timeline",
-    timeline.length ? timeline.join("\n") : "- No file save events captured yet.",
+    "## 1. Timeline (File Saves)",
     "",
-    "## Decisions",
-    decisions.length ? decisions.join("\n") : "- No decisions recorded yet.",
+    timelineSection.length ? timelineSection.join("\n") : "- No file save events recorded.",
     "",
-    "## Bugfix Notes",
-    bugfixes.length ? bugfixes.join("\n") : "- No bugfix notes recorded yet."
+    "## 2. Decisions",
+    "",
+    decisionsSection.length ? decisionsSection.join("\n") : "- No decisions recorded.",
+    "",
+    "## 3. Bugfixes",
+    "",
+    bugfixesSection.length ? bugfixesSection.join("\n") : "- No bugfix notes recorded."
   ].join("\n");
 
   const reportPath = path.join(reportsDir, "report.md");
   fs.writeFileSync(reportPath, markdown, "utf8");
 
   return { markdown, reportPath };
+}
+
+function formatTimestamp(isoString: string): string {
+  const date = new Date(isoString);
+  // Format: YYYY-MM-DD HH:MM
+  return date.toISOString().replace("T", " ").substring(0, 16);
 }
