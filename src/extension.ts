@@ -10,7 +10,7 @@ import {
   primeDocumentContent,
   FileSaveEvent
 } from "./logging";
-import { generateReport } from "./report";
+import { generateReport, exportReportPdf } from "./report";
 import { openReportWebview } from "./webview";
 import { generateAiNote, AiProvider, AiNoteRequest, WorkType } from "./aiClient";
 
@@ -68,9 +68,48 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const reportCommand = vscode.commands.registerCommand(
     "debtcrasher.openReport",
-    () => {
-      const report = generateReport(workspaceRoot);
-      openReportWebview(context, report.markdown);
+    async () => {
+      const config = vscode.workspace.getConfiguration("debtcrasher");
+      const provider = config.get<AiProvider>("report.provider", "openai");
+      const model = config.get<string>("report.model", "gpt-4o");
+      const apiKey = config.get<string>(`providers.${provider}.apiKey`, "");
+
+      if (!apiKey) {
+        const selection = await vscode.window.showErrorMessage(
+          `DebtCrasher: ${provider} API Key가 설정되지 않았습니다.`,
+          "설정 열기"
+        );
+        if (selection === "설정 열기") {
+          vscode.commands.executeCommand("workbench.action.openSettings", `debtcrasher.providers.${provider}.apiKey`);
+        }
+        return;
+      }
+
+      try {
+        const report = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: "DebtCrasher: 타임라인 학습지 생성 중...",
+            cancellable: false
+          },
+          () => generateReport(workspaceRoot, { provider, apiKey, model })
+        );
+
+        openReportWebview(context, report.markdown, async () => {
+          try {
+            const pdfPath = await exportReportPdf(workspaceRoot, report.markdown);
+            vscode.window.showInformationMessage(`DebtCrasher: PDF 저장 완료 - ${pdfPath}`);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown error.";
+            vscode.window.showErrorMessage(
+              `DebtCrasher: PDF 생성 실패. ${message} (웹뷰의 인쇄 기능을 이용해 주세요.)`
+            );
+          }
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error.";
+        vscode.window.showErrorMessage(`DebtCrasher: 리포트 생성 실패. ${message}`);
+      }
     }
   );
 
