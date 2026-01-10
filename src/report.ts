@@ -30,7 +30,7 @@ export async function generateReport(
   events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
   const relevantEvents = events.filter(
-    (event): event is BaseEvent =>
+    (event): event is LogEvent =>
       event.type === "file_save" ||
       event.type === "decision" ||
       event.type === "bugfix" ||
