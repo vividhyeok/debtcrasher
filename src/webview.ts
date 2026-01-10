@@ -7,7 +7,8 @@ import * as vscode from "vscode";
 
 export function openReportWebview(
   context: vscode.ExtensionContext,
-  markdown: string
+  markdown: string,
+  onExportPdf?: () => void
 ): void {
   const panel = vscode.window.createWebviewPanel(
     "debtcrasherReport",
@@ -24,7 +25,7 @@ export function openReportWebview(
   // Future: Handle PDF export message from webview
   panel.webview.onDidReceiveMessage(message => {
       if (message.command === 'exportPdf') {
-          vscode.window.showInformationMessage("PDF Export is not fully implemented in this MVP. (Use browser print as fallback)");
+          onExportPdf?.();
       }
   });
 }
@@ -38,8 +39,8 @@ function getWebviewHtml(
   const content = JSON.stringify(markdown);
 
   // Simple extraction of date
-  const dateMatch = markdown.match(/생성일: (.*)/);
-  const reportDate = dateMatch ? dateMatch[1].trim() : new Date().toISOString();
+  const dateLine = markdown.split(/\r?\n/).find((line) => line.includes("생성일"));
+  const reportDate = dateLine ? dateLine.split(":").slice(1).join(":").trim() : new Date().toISOString();
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -182,7 +183,7 @@ function getWebviewHtml(
         <span class="toolbar-title">DebtCrasher Report</span>
         <span class="toolbar-date">${reportDate}</span>
       </div>
-      <button type="button" class="btn-export" id="btn-export">Export PDF</button>
+      <button type="button" class="btn-export" id="btn-export">📄 PDF로 저장하기</button>
     </div>
   </div>
   
