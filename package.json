@@ -1,0 +1,50 @@
+{
+  "name": "debtcrasher",
+  "displayName": "DebtCrasher",
+  "description": "Capture structured development logs and render narrative reports.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.87.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onCommand:debtcrasher.recordDecision",
+    "onCommand:debtcrasher.recordBugfix",
+    "onCommand:debtcrasher.openReport",
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "debtcrasher.recordDecision",
+        "title": "DebtCrasher: Record Decision"
+      },
+      {
+        "command": "debtcrasher.recordBugfix",
+        "title": "DebtCrasher: Record Bugfix"
+      },
+      {
+        "command": "debtcrasher.openReport",
+        "title": "DebtCrasher: Open Report"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.16",
+    "@types/vscode": "^1.87.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3",
+    "vsce": "^2.15.0"
+  },
+  "dependencies": {
+    "diff": "^5.2.0"
+  }
+}
