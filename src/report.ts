@@ -1,6 +1,14 @@
 import * as fs from "fs";
 import * as path from "path";
-import { ensureDirectories, LogEvent, FileSaveEvent, DecisionEvent, BugfixEvent } from "./logging";
+import {
+  ensureDirectories,
+  readLogEvents,
+  LogEvent,
+  FileSaveEvent,
+  DecisionEvent,
+  BugfixEvent,
+  AiNoteEvent
+} from "./logging";
 
 export type GeneratedReport = {
   markdown: string;
@@ -13,28 +21,8 @@ export type GeneratedReport = {
 // -------------------------------------------------------------------------
 
 export function generateReport(workspaceRoot: string): GeneratedReport {
-  const { logsDir, reportsDir } = ensureDirectories(workspaceRoot);
-  const logFiles = fs
-    .readdirSync(logsDir)
-    .filter((file) => file.endsWith(".log"))
-    .sort();
-
-  const events: LogEvent[] = [];
-
-  for (const file of logFiles) {
-    const fullPath = path.join(logsDir, file);
-    const content = fs.readFileSync(fullPath, "utf8");
-    for (const line of content.split(/\r?\n/)) {
-      if (!line.trim()) {
-        continue;
-      }
-      try {
-        events.push(JSON.parse(line) as LogEvent);
-      } catch {
-        // Safe parsing: Skip malformed lines to prevent crashes
-      }
-    }
-  }
+  const { reportsDir } = ensureDirectories(workspaceRoot);
+  const events: LogEvent[] = readLogEvents(workspaceRoot);
 
   // Sort events by timestamp just in case
   events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
@@ -42,6 +30,7 @@ export function generateReport(workspaceRoot: string): GeneratedReport {
   const fileSaveEvents = events.filter((e): e is FileSaveEvent => e.type === "file_save");
   const decisionEvents = events.filter((e): e is DecisionEvent => e.type === "decision");
   const bugfixEvents = events.filter((e): e is BugfixEvent => e.type === "bugfix");
+  const aiNoteEvents = events.filter((e): e is AiNoteEvent => e.type === "ai_note");
 
   // Format Timeline
   const timelineSection = fileSaveEvents.map((e) => {
@@ -64,6 +53,22 @@ export function generateReport(workspaceRoot: string): GeneratedReport {
     return `- ${dateStr} — ${contextStr}${e.note}`;
   });
 
+  const aiNotesSection = aiNoteEvents.map((e) => {
+    const dateStr = formatTimestamp(e.timestamp);
+    const filePath = e.filePath ?? "unknown";
+    const lines: string[] = [];
+    lines.push(`- [${e.workType}] (${dateStr}) ${filePath} — ${e.mainGoal}`);
+    lines.push(`  - changeSummary: ${e.changeSummary}`);
+    lines.push(`  - importantFunctions: ${e.importantFunctions.join(", ")}`);
+    if (e.risks) {
+      lines.push(`  - risks: ${e.risks}`);
+    }
+    if (e.nextSteps) {
+      lines.push(`  - nextSteps: ${e.nextSteps}`);
+    }
+    return lines.join("\n");
+  });
+
   const now = new Date().toISOString();
   
   const markdown = [
@@ -81,7 +86,11 @@ export function generateReport(workspaceRoot: string): GeneratedReport {
     "",
     "## 3. Bugfixes",
     "",
-    bugfixesSection.length ? bugfixesSection.join("\n") : "- No bugfix notes recorded."
+    bugfixesSection.length ? bugfixesSection.join("\n") : "- No bugfix notes recorded.",
+    "",
+    "## 4. AI Notes",
+    "",
+    aiNotesSection.length ? aiNotesSection.join("\n") : "- No AI notes recorded."
   ].join("\n");
 
   const reportPath = path.join(reportsDir, "report.md");

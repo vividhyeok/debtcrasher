@@ -11,7 +11,7 @@ import { execSync } from "child_process";
 
 const MAX_LOG_SIZE_BYTES = 5 * 1024 * 1024;
 
-export type EventType = 'file_save' | 'decision' | 'bugfix' | 'llm_call';
+export type EventType = 'file_save' | 'decision' | 'bugfix' | 'llm_call' | 'ai_note';
 
 export interface BaseEvent {
   type: EventType;
@@ -49,7 +49,22 @@ export interface LlmCallEvent extends BaseEvent {
   argsSummary: string;
 }
 
-export type LogEvent = FileSaveEvent | DecisionEvent | BugfixEvent | LlmCallEvent;
+export interface AiNoteEvent extends BaseEvent {
+  type: 'ai_note';
+  workType: 'feature' | 'refactor' | 'bugfix' | 'test' | 'chore';
+  mainGoal: string;        // 이번 변경의 핵심 목적 (1줄)
+  changeSummary: string;   // 이전/이후 코드 차이를 요약한 설명
+  importantFunctions: string[];
+  risks?: string;
+  nextSteps?: string;
+}
+
+export type LogEvent =
+  | FileSaveEvent
+  | DecisionEvent
+  | BugfixEvent
+  | LlmCallEvent
+  | AiNoteEvent;
 
 const lastSavedContent = new Map<string, string>();
 
@@ -145,6 +160,60 @@ export function createTextEvent(
       context
     };
   }
+}
+
+/**
+ * Builds an AI note event with shared metadata.
+ */
+export function createAiNoteEvent(
+  payload: Omit<AiNoteEvent, "type" | "timestamp" | "branch" | "filePath">,
+  workspaceRoot: string,
+  filePath?: string
+): AiNoteEvent {
+  return {
+    type: "ai_note",
+    timestamp: new Date().toISOString(),
+    branch: resolveGitBranch(workspaceRoot) ?? "unknown",
+    filePath,
+    ...payload
+  };
+}
+
+/**
+ * Reads all log events from the workspace logs directory.
+ */
+export function readLogEvents(workspaceRoot: string): LogEvent[] {
+  const { logsDir } = ensureDirectories(workspaceRoot);
+  const logFiles = fs
+    .readdirSync(logsDir)
+    .filter((file) => file.endsWith(".log"))
+    .sort();
+
+  const events: LogEvent[] = [];
+
+  for (const file of logFiles) {
+    const fullPath = path.join(logsDir, file);
+    const content = fs.readFileSync(fullPath, "utf8");
+    for (const line of content.split(/\r?\n/)) {
+      if (!line.trim()) {
+        continue;
+      }
+      try {
+        events.push(JSON.parse(line) as LogEvent);
+      } catch {
+        // Safe parsing: Skip malformed lines to prevent crashes
+      }
+    }
+  }
+
+  return events;
+}
+
+/**
+ * Returns the cached last-saved content for a file, if available.
+ */
+export function getCachedDocumentContent(filePath: string): string | undefined {
+  return lastSavedContent.get(filePath);
 }
 
 export function appendLogEvent(workspaceRoot: string, event: LogEvent): void {

@@ -14,6 +14,7 @@
     "onCommand:debtcrasher.recordDecision",
     "onCommand:debtcrasher.recordBugfix",
     "onCommand:debtcrasher.openReport",
+    "onCommand:debtcrasher.generateAiNote",
     "onStartupFinished"
   ],
   "main": "./out/extension.js",
@@ -30,8 +31,33 @@
       {
         "command": "debtcrasher.openReport",
         "title": "DebtCrasher: Open Report"
+      },
+      {
+        "command": "debtcrasher.generateAiNote",
+        "title": "DebtCrasher: Generate AI Note"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "DebtCrasher",
+      "properties": {
+        "debtcrasher.ai.provider": {
+          "type": "string",
+          "enum": [
+            "none",
+            "openai",
+            "gemini",
+            "deepseek"
+          ],
+          "default": "none",
+          "description": "AI provider used to generate structured AI notes."
+        },
+        "debtcrasher.ai.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key for the selected AI provider."
+        }
+      }
+    }
   },
   "scripts": {
     "build": "tsc -p ./",
