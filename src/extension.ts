@@ -10,7 +10,7 @@ import {
   primeDocumentContent,
   FileSaveEvent
 } from "./logging";
-import { generateReport, exportReportPdf } from "./report";
+import { generateReport, exportReportHtml } from "./report";
 import { openReportWebview } from "./webview";
 import { generateAiNote, AiProvider, AiNoteRequest, WorkType } from "./aiClient";
 
@@ -96,22 +96,24 @@ export function activate(context: vscode.ExtensionContext): void {
           () => generateReport(workspaceRoot, { provider, apiKey, reasoningModel })
         );
 
-        openReportWebview(context, report.markdown, async () => {
-          try {
-            const htmlPath = await exportReportPdf(workspaceRoot, report.markdown);
-            const selection = await vscode.window.showInformationMessage(
-              `리포트가 HTML로 저장되었습니다 (인쇄하여 PDF 저장 가능): ${htmlPath}`,
-              "파일 열기"
-            );
-            if (selection === "파일 열기") {
-              const uri = vscode.Uri.file(htmlPath);
-              vscode.env.openExternal(uri);
+        openReportWebview(context, report.markdown, {
+          onExportHtml: async () => {
+            try {
+              const htmlPath = await exportReportHtml(workspaceRoot, report.markdown);
+              const selection = await vscode.window.showInformationMessage(
+                `리포트 HTML이 저장되었습니다: ${htmlPath}`,
+                "파일 열기"
+              );
+              if (selection === "파일 열기") {
+                const uri = vscode.Uri.file(htmlPath);
+                vscode.env.openExternal(uri);
+              }
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "Unknown error.";
+              vscode.window.showErrorMessage(
+                `DebtCrasher: Export failed. ${message}`
+              );
             }
-          } catch (error) {
-            const message = error instanceof Error ? error.message : "Unknown error.";
-            vscode.window.showErrorMessage(
-              `DebtCrasher: Export failed. ${message}`
-            );
           }
         });
       } catch (error) {
@@ -218,27 +220,15 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // Auto AI Note Generation
     const config = vscode.workspace.getConfiguration("debtcrasher");
-    const autoGen = config.get<boolean>("ai.autoGenerateOnSave", false);
+    const autoGen = config.get<boolean>("autoGenerateOnSave", true);
     
     // Only trigger if auto-gen is on, and there are actual changes
     if (autoGen && (event.addedLines > 0 || event.removedLines > 0)) {
-        // Resolve settings with fallback hierarchy: note specific > global default
-        let provider = config.get<AiProvider>("ai.note.provider", "none");
-        if (provider === "none") {
-            provider = config.get<AiProvider>("ai.provider", "none");
-        }
-        
-        let apiKey = config.get<string>("ai.note.apiKey", "");
-        if (!apiKey) {
-            apiKey = config.get<string>("ai.apiKey", "");
-        }
+        const provider = config.get<AiProvider>("note.provider", "openai");
+        const model = config.get<string>("note.model", "gpt-4o-mini");
+        const apiKey = config.get<string>(`providers.${provider}.apiKey`, "");
 
-        let model = config.get<string>("ai.note.model", "");
-        if (!model) {
-            model = config.get<string>("ai.model", "");
-        }
-
-        if (provider !== "none" && apiKey) {
+        if (apiKey) {
             const filePath = vscode.workspace.asRelativePath(document.uri.fsPath);
             const recentEvents = readLogEvents(workspaceRoot)
                 .filter((e): e is FileSaveEvent => e.type === "file_save" && e.filePath === filePath)
