@@ -79,7 +79,7 @@ const SYSTEM_PROMPT = [
   "항상 위 스키마의 키만 사용하고, JSON 객체 하나만 출력해라."
 ].join("\n");
 
-const REPORT_REASONING_PROMPT = [
+export const REPORT_REASONING_PROMPT = [
   "당신은 시니어 소프트웨어 엔지니어이자 기술 교육자입니다.",
   "",
   "당신에게 전달되는 것은 BaseBlock 배열입니다.",
@@ -145,12 +145,14 @@ const REPORT_REASONING_PROMPT = [
   "}",
   "",
   "규칙:",
+  "- JSON 외 다른 텍스트를 절대 출력하지 않습니다 (설명/마크다운 금지).",
   "- 모든 텍스트는 한국어로 작성합니다 (영어 표현이 들어가지 않도록 합니다).",
   "- 각 항목은 충분히 길고 친절하게, 학습자가 바로 이해할 수 있게 구체적으로 적습니다.",
   "- 번호/리스트를 활용해 구조를 명확히 하고, 가능하면 2~3개 이상의 세부 bullet을 넣습니다.",
   "- 근거가 충분하면 추론을 사용해도 좋습니다.",
   "- 불필요하게 과장하거나 장황하게 적지 말고, 학습자 중심으로 가치 있는 정보만 넣으세요.",
-  "- BaseBlock에 없는 내용은 지어내지 말되, 상황상 자연스러운 추론은 허용됩니다."
+  "- BaseBlock에 없는 내용은 지어내지 말되, 상황상 자연스러운 추론은 허용됩니다.",
+  "- 비어 있는 항목은 빈 배열([]) 또는 빈 문자열로 유지합니다."
 ].join("\n");
 
 /**
@@ -163,17 +165,8 @@ export async function generateAiNote(
   request: AiNoteRequest
 ): Promise<AiNotePayload> {
   const prompt = buildUserPrompt(request);
-
-  switch (provider) {
-    case "openai":
-      return callOpenAi(apiKey, model, prompt);
-    case "gemini":
-      return callGemini(apiKey, model, prompt);
-    case "deepseek":
-      return callDeepSeek(apiKey, model, prompt);
-    default:
-      throw new Error("Unsupported AI provider.");
-  }
+  const content = await callProviderText(provider, apiKey, model, SYSTEM_PROMPT, prompt);
+  return parseAiNotePayload(content);
 }
 
 /**
@@ -186,37 +179,9 @@ export async function generateReportReasoning(
   baseBlocks: BaseBlock[]
 ): Promise<ReasoningJson> {
   const userPrompt = JSON.stringify({ blocks: baseBlocks }, null, 2);
-
-  switch (provider) {
-    case "openai": {
-      const content = await callOpenAiText(apiKey, model || "gpt-4o", REPORT_REASONING_PROMPT, userPrompt);
-      return parseReasoningJson(content);
-    }
-    case "gemini": {
-      const modelName = model || "gemini-1.5-pro";
-      const body = {
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: `${REPORT_REASONING_PROMPT}\n\n${userPrompt}` }]
-          }
-        ]
-      };
-      const response = await postJson(
-        `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
-        { "Content-Type": "application/json" },
-        body
-      );
-      const content = response?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-      return parseReasoningJson(content);
-    }
-    case "deepseek": {
-      const content = await callDeepSeekText(apiKey, model || "deepseek-chat", REPORT_REASONING_PROMPT, userPrompt);
-      return parseReasoningJson(content);
-    }
-    default:
-      throw new Error("Unsupported AI provider.");
-  }
+  const fallbackModel = resolveReasoningModel(provider, model);
+  const content = await callProviderText(provider, apiKey, fallbackModel, REPORT_REASONING_PROMPT, userPrompt);
+  return parseReasoningJson(content);
 }
 
 function buildUserPrompt(request: AiNoteRequest): string {
@@ -253,99 +218,18 @@ function parseReasoningJson(content: unknown): ReasoningJson {
     throw new Error("Reasoning JSON schema mismatch.");
   }
 
-  const validBlocks = blocks
-    .map((block) => ({
-      time: block.time,
-      file: block.file,
-      oneLineSummary: block.oneLineSummary,
-      problem: block.problem,
-      behavior: Array.isArray(block.behavior) ? block.behavior : [],
-      concepts: Array.isArray(block.concepts) ? block.concepts : [],
-      alternatives: Array.isArray(block.alternatives) ? block.alternatives : [],
-      whyChosen: Array.isArray(block.whyChosen) ? block.whyChosen : [],
-      tradeoffs: Array.isArray(block.tradeoffs) ? block.tradeoffs : [],
-      rememberThis: Array.isArray(block.rememberThis) ? block.rememberThis : []
-    }))
-    .filter((block) =>
-      typeof block.time === "string" &&
-      typeof block.oneLineSummary === "string" &&
-      typeof block.problem === "string"
-    );
+  const normalizedBlocks = blocks.map((block, index) => normalizeReasoningBlock(block, index));
+  const validBlocks = normalizedBlocks.filter((block) => !block.__invalid);
 
   if (validBlocks.length === 0) {
-    throw new Error("No valid reasoning blocks found in AI response.");
+    const invalidReasons = normalizedBlocks
+      .filter((block) => block.__invalid)
+      .map((block) => block.__invalid)
+      .join(" | ");
+    throw new Error(`No valid reasoning blocks found in AI response. ${invalidReasons}`);
   }
 
-  return { blocks: validBlocks };
-}
-
-async function callOpenAi(apiKey: string, model: string, userPrompt: string): Promise<AiNotePayload> {
-  const body = {
-    model: model || "gpt-4o-mini", // Fallback
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: userPrompt }
-    ],
-    temperature: 0.2
-  };
-
-  const response = await postJson(
-    "https://api.openai.com/v1/chat/completions",
-    {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body
-  );
-
-  const content = response?.choices?.[0]?.message?.content;
-  return parseAiNotePayload(content);
-}
-
-async function callGemini(apiKey: string, model: string, userPrompt: string): Promise<AiNotePayload> {
-  const modelName = model || "gemini-1.5-flash"; // Fallback
-  const body = {
-    contents: [
-      {
-        role: "user",
-        parts: [{ text: `${SYSTEM_PROMPT}\n\n${userPrompt}` }]
-      }
-    ]
-  };
-
-  const response = await postJson(
-    `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
-    {
-      "Content-Type": "application/json"
-    },
-    body
-  );
-
-  const content = response?.candidates?.[0]?.content?.parts?.[0]?.text;
-  return parseAiNotePayload(content);
-}
-
-async function callDeepSeek(apiKey: string, model: string, userPrompt: string): Promise<AiNotePayload> {
-  const body = {
-    model: model || "deepseek-chat", // Fallback
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: userPrompt }
-    ],
-    temperature: 0.2
-  };
-
-  const response = await postJson(
-    "https://api.deepseek.com/chat/completions",
-    {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body
-  );
-
-  const content = response?.choices?.[0]?.message?.content;
-  return parseAiNotePayload(content);
+  return { blocks: validBlocks as ReasoningBlock[] };
 }
 
 function parseAiNotePayload(content: unknown): AiNotePayload {
@@ -353,18 +237,11 @@ function parseAiNotePayload(content: unknown): AiNotePayload {
     throw new Error("AI response was empty.");
   }
 
-  try {
-    return JSON.parse(content) as AiNotePayload;
-  } catch {
-    const trimmed = content.trim();
-    const start = trimmed.indexOf("{");
-    const end = trimmed.lastIndexOf("}");
-    if (start === -1 || end === -1) {
-      throw new Error("AI response did not include JSON.");
-    }
-    const jsonText = trimmed.slice(start, end + 1);
-    return JSON.parse(jsonText) as AiNotePayload;
+  const parsed = safeParseJson(content);
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("AI response did not include JSON.");
   }
+  return parsed as AiNotePayload;
 }
 
 function safeParseJson(content: string): any {
@@ -387,6 +264,73 @@ function safeParseJson(content: string): any {
     }
 
     throw new Error("AI response did not include JSON.");
+  }
+}
+
+function normalizeReasoningBlock(block: any, index: number): ReasoningBlock & { __invalid?: string } {
+  const invalidReasons: string[] = [];
+  const time = typeof block?.time === "string" ? block.time : "";
+  const file = typeof block?.file === "string" ? block.file : "";
+  const oneLineSummary = typeof block?.oneLineSummary === "string" ? block.oneLineSummary : "";
+  const problem = typeof block?.problem === "string" ? block.problem : "";
+  const behavior = Array.isArray(block?.behavior) ? block.behavior.filter((v: unknown) => typeof v === "string") : [];
+  const concepts = Array.isArray(block?.concepts) ? block.concepts : [];
+  const alternatives = Array.isArray(block?.alternatives) ? block.alternatives : [];
+  const whyChosen = Array.isArray(block?.whyChosen) ? block.whyChosen.filter((v: unknown) => typeof v === "string") : [];
+  const tradeoffs = Array.isArray(block?.tradeoffs) ? block.tradeoffs.filter((v: unknown) => typeof v === "string") : [];
+  const rememberThis = Array.isArray(block?.rememberThis) ? block.rememberThis.filter((v: unknown) => typeof v === "string") : [];
+
+  if (!time) invalidReasons.push("time");
+  if (!oneLineSummary) invalidReasons.push("oneLineSummary");
+  if (!problem) invalidReasons.push("problem");
+
+  return {
+    time,
+    file,
+    oneLineSummary,
+    problem,
+    behavior,
+    concepts,
+    alternatives,
+    whyChosen,
+    tradeoffs,
+    rememberThis,
+    __invalid: invalidReasons.length ? `Block ${index + 1} missing: ${invalidReasons.join(", ")}` : undefined
+  };
+}
+
+function resolveReasoningModel(provider: AiProvider, model: string): string {
+  if (model && model.trim()) {
+    return model.trim();
+  }
+  switch (provider) {
+    case "openai":
+      return "gpt-4o";
+    case "gemini":
+      return "gemini-1.5-pro";
+    case "deepseek":
+      return "deepseek-chat";
+    default:
+      return "gpt-4o";
+  }
+}
+
+async function callProviderText(
+  provider: AiProvider,
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userPrompt: string
+): Promise<string> {
+  switch (provider) {
+    case "openai":
+      return callOpenAiText(apiKey, model || "gpt-4o-mini", systemPrompt, userPrompt);
+    case "gemini":
+      return callGeminiText(apiKey, model || "gemini-1.5-flash", systemPrompt, userPrompt);
+    case "deepseek":
+      return callDeepSeekText(apiKey, model || "deepseek-chat", systemPrompt, userPrompt);
+    default:
+      throw new Error("Unsupported AI provider.");
   }
 }
 
@@ -415,6 +359,29 @@ async function callOpenAiText(
   );
 
   return response?.choices?.[0]?.message?.content ?? "";
+}
+
+async function callGeminiText(
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userPrompt: string
+): Promise<string> {
+  const body = {
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }]
+      }
+    ]
+  };
+
+  const response = await postJson(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+    { "Content-Type": "application/json" },
+    body
+  );
+  return response?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 }
 
 async function callDeepSeekText(

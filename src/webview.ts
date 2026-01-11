@@ -5,10 +5,15 @@ import * as vscode from "vscode";
 // Renders the reconstructed story in a user-friendly Webview.
 // -------------------------------------------------------------------------
 
+export type ReportWebviewHandlers = {
+  onExportHtml?: () => void;
+  onPrint?: () => void;
+};
+
 export function openReportWebview(
   context: vscode.ExtensionContext,
   markdown: string,
-  onExportPdf?: () => void
+  handlers: ReportWebviewHandlers = {}
 ): void {
   const panel = vscode.window.createWebviewPanel(
     "debtcrasherReport",
@@ -24,8 +29,11 @@ export function openReportWebview(
   
   // Future: Handle PDF export message from webview
   panel.webview.onDidReceiveMessage(message => {
-      if (message.command === 'exportPdf') {
-          onExportPdf?.();
+      if (message.command === 'exportHtml') {
+          handlers.onExportHtml?.();
+      }
+      if (message.command === 'print') {
+          handlers.onPrint?.();
       }
   });
 }
@@ -51,21 +59,24 @@ function getWebviewHtml(
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline' https:; script-src 'nonce-${nonce}' https: 'unsafe-eval';" />
   <title>DebtCrasher Report</title>
   <style>
+    :root {
+      color-scheme: light dark;
+    }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       margin: 0;
       padding: 0;
-      background: #eef2f5; 
-      color: #333;
+      background: var(--vscode-editor-background);
+      color: var(--vscode-editor-foreground);
     }
     .toolbar-container {
       position: sticky;
       top: 0;
       z-index: 100;
-      background: #fff;
-      border-bottom: 1px solid #ddd;
+      background: var(--vscode-editor-background);
+      border-bottom: 1px solid var(--vscode-editorWidget-border);
       padding: 10px 0;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
     .toolbar-content {
       max-width: 800px;
@@ -78,14 +89,19 @@ function getWebviewHtml(
     .toolbar-title {
       font-weight: 600;
       font-size: 16px;
-      color: #2c3e50;
+      color: var(--vscode-foreground);
     }
     .toolbar-date {
         font-size: 12px;
-        color: #7f8c8d;
+        color: var(--vscode-descriptionForeground);
         margin-left: 10px;
     }
-    .btn-export {
+    .toolbar-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .btn-export,
+    .btn-html {
       background-color: #0969da;
       color: white;
       border: none;
@@ -95,7 +111,8 @@ function getWebviewHtml(
       font-size: 13px;
       font-weight: 500;
     }
-    .btn-export:hover {
+    .btn-export:hover,
+    .btn-html:hover {
       background-color: #0255b8;
     }
     .page-container {
@@ -104,20 +121,21 @@ function getWebviewHtml(
       padding: 30px 20px;
     }
     .page {
-      width: 100%;
-      max-width: 800px; 
-      background: #ffffff;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+      width: 210mm;
+      min-height: 297mm;
+      max-width: 100%;
+      background: var(--vscode-editor-background);
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
       border-radius: 4px;
       padding: 48px 56px;
       box-sizing: border-box;
-      min-height: 800px;
+      border: 1px solid var(--vscode-editorWidget-border);
     }
     /* Notion-like Styles */
     .markdown-body { 
         line-height: 1.7; 
         font-size: 16px; 
-        color: #37352f;
+        color: var(--vscode-foreground);
     }
     .markdown-body h1 { 
         font-size: 2.2em;
@@ -140,7 +158,7 @@ function getWebviewHtml(
         margin-bottom: 0.2em;
     }
     .markdown-body pre { 
-        background: #f7f6f3; 
+        background: color-mix(in srgb, var(--vscode-editor-background) 70%, #f7f6f3); 
         padding: 16px; 
         overflow: auto; 
         border-radius: 3px; 
@@ -149,7 +167,7 @@ function getWebviewHtml(
         color: #eb5757;
     }
     .markdown-body code { 
-        background: #f7f6f3; 
+        background: color-mix(in srgb, var(--vscode-editor-background) 70%, #f7f6f3); 
         color: #eb5757;
         padding: 0.2em 0.4em; 
         border-radius: 3px; 
@@ -166,7 +184,7 @@ function getWebviewHtml(
     }
     .markdown-body hr {
         height: 1px;
-        background-color: #efefef;
+        background-color: var(--vscode-editorWidget-border);
         border: none;
         margin: 2em 0;
     }
@@ -174,6 +192,24 @@ function getWebviewHtml(
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, "Apple Color Emoji", Arial, sans-serif, "Segoe UI Emoji", "Segoe UI Symbol";
     }
     .error-message { color: red; padding: 20px; text-align: center; }
+
+    @media print {
+      body {
+        background: #ffffff;
+      }
+      .toolbar-container {
+        display: none;
+      }
+      .page-container {
+        padding: 0;
+      }
+      .page {
+        box-shadow: none;
+        border: none;
+        border-radius: 0;
+        padding: 0;
+      }
+    }
   </style>
 </head>
 <body>
@@ -183,7 +219,10 @@ function getWebviewHtml(
         <span class="toolbar-title">DebtCrasher Report</span>
         <span class="toolbar-date">${reportDate}</span>
       </div>
-      <button type="button" class="btn-export" id="btn-export">📄 PDF로 저장하기</button>
+      <div class="toolbar-actions">
+        <button type="button" class="btn-html" id="btn-html">🧾 HTML 저장</button>
+        <button type="button" class="btn-export" id="btn-export">🖨️ 인쇄/PDF</button>
+      </div>
     </div>
   </div>
   
@@ -201,9 +240,12 @@ function getWebviewHtml(
     const vscode = acquireVsCodeApi();
 
     // Export button handler
+    document.getElementById('btn-html').addEventListener('click', () => {
+        vscode.postMessage({ command: 'exportHtml' });
+    });
+
     document.getElementById('btn-export').addEventListener('click', () => {
-        vscode.postMessage({ command: 'exportPdf' });
-        // Try native print for immediate PDF save capability
+        vscode.postMessage({ command: 'print' });
         window.print();
     });
 
