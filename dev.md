@@ -1,119 +1,93 @@
-# DebtCrasher 프로젝트 개발 문서
+# DebtCrasher 개발 문서 (현재 상태)
 
-DebtCrasher는 개발 과정의 모든 맥락(Context)을 캡처하여 개발 부채를 관리하고 히스토리를 시각화하는 VS Code 확장 프로그램입니다. **"기록은 구조적으로(Layer A), 보고는 서사적으로(Layer B)"**라는 철학을 따릅니다.
+DebtCrasher는 **Layer A(Structured Log)**와 **Layer B(Narrative Report)**로 분리된 VS Code 확장입니다. 개발 히스토리를 로그로 모으고, 단일 LLM 호출로 추론 JSON을 만든 뒤 TypeScript 템플릿으로 한국어 학습지 스타일 리포트를 렌더링합니다.
 
-## 1. 프로젝트 아키텍처
+## 1. 아키텍처 개요
 
-이 프로젝트는 명확한 **2-Layer 아키텍처**를 따릅니다.
+- **Layer A – Structured Log** ([src/logging.ts](src/logging.ts))
+  - JSONL로 모든 이벤트 기록: `file_save`, `decision`, `bugfix`, `ai_note`, `llm_call`
+  - 파일 저장 시 diff 기반 added/removed 계산, Git 브랜치 포함
+  - 로그 저장 위치: `.devcrasher/logs/YYYY-MM-DD-N.log`
 
-### Layer A: 구조적 로그 (Structured Log Layer)
-- **책임**: "있는 그대로의 사실"을 기록합니다.
-- **저장소**: `.devcrasher/logs/YYYY-MM-DD-N.log` (JSON Lines 형식)
-- **데이터**: 
-  - **Auto**: `file_save` (Diff, 추가/삭제 라인 수)
-  - **Manual**: `decision`, `bugfix` (사용자 메모)
-  - **AI**: `ai_note` (AI가 분석한 코드 변경 의도, 요약, 리스크)
+- **Layer B – Narrative Report** ([src/report.ts](src/report.ts))
+  - 로그를 읽어 단일 LLM reasoning JSON을 생성 후, TS 템플릿으로 "상세하고 친절한 한국어 학습지" 스타일 리포트 렌더링
+  - 결과 Markdown을 `.devcrasher/reports/report.md`로 저장, Webview 렌더
+  - HTML 내보내기 지원(브라우저 인쇄로 PDF 저장 가능)
 
-### Layer B: 서사적 리포트 (Narrative Report Layer)
-- **책임**: Layer A의 데이터를 "읽기 좋은 이야기"로 재구성합니다.
-- **출력**: `.devcrasher/reports/report.md` (Markdown) & VS Code Webview.
-- **철학**: "Notion처럼 깔끔하게, 한글로 친절하게"
+## 2. 주요 기능
 
----
+1) **자동 로깅**
+- `onDidSaveTextDocument` 시 diff 계산 후 `file_save` 이벤트 기록
+- 불필요한 경로(.git 등) 무시
 
-## 2. 주요 기능 및 워크플로우
+2) **수동 메모 이벤트**
+- `decision`, `bugfix` 명령으로 사용자 메모 기록 (위치/브랜치 포함)
 
-### 2.1 자동 로깅 (Auto Logging)
-- 파일 저장 시(`onDidSaveTextDocument`) 메모리 캐시와 비교하여 `diff`를 계산하고 즉시 저장합니다.
-- `.git` 폴더 등 불필요한 변경은 자동으로 무시됩니다.
+3) **AI 노트 (단일 호출)**
+- `debtcrasher.generateAiNote`
+- 현재 파일 diff/최근 저장 이력 기반으로 AI가 `ai_note` JSON 생성
 
-### 2.2 AI 노트 생성 (AI Note Generation)
-- **핵심**: "이 코드가 왜 바뀌었는가?"를 AI가 대신 작성합니다.
-- **트리거**: 저장 시 자동 실행(설정 가능) 또는 수동 명령.
-- **모델 전략**: 
-  - 노트 생성은 빈번하므로 가볍고 저렴한 모델(`gpt-4o-mini`, `gemini-1.5-flash`) 사용을 권장.
-- **출력**: 작업 유형(Feature/Refactor..), 목적, 요약, 주요 변경 함수 등을 구조화된 데이터로 저장.
+4) **리포트 생성 (단일 reasoning 파이프라인)**
+- 명령: `debtcrasher.openReport`
+- 흐름: BaseBlock 배열 구성 → LLM Reasoning(JSON 생성) → TypeScript 템플릿(상세 Markdown 렌더)
+- 특징: Notion 스타일 UI, 풍부한 한국어 설명, 이모지 활용, HTML/PDF 저장 지원
 
-### 2.3 리포트 & 시각화
-- Markdown으로 변환된 리포트를 VS Code Webview에서 렌더링합니다.
-- **UI**: Notion 스타일 CSS 적용, 이모지(✨, 🐛) 활용.
-- **PDF**: 브라우저 기본 인쇄 기능을 활용하여 PDF로 저장 가능.
+## 3. 설정 (VS Code Settings)
 
----
+- **Provider API Key (공통)**
+  - `debtcrasher.providers.openai.apiKey`
+  - `debtcrasher.providers.gemini.apiKey`
+  - `debtcrasher.providers.deepseek.apiKey`
 
-## 3. 코드베이스 구조 (`src/`)
+- **AI Note (저비용 단일 호출)**
+  - `debtcrasher.note.provider` (openai | gemini | deepseek)
+  - `debtcrasher.note.model` (기본: gpt-4o-mini)
 
-| 파일 | 역할 및 핵심 로직 |
+- **Report (Single Reasoning 파이프라인)**
+  - `debtcrasher.report.provider`
+  - `debtcrasher.report.reasoningModel` (비우면 기본: openai gpt-4o / gemini-1.5-pro / deepseek-chat)
+
+- **자동 생성**
+  - `debtcrasher.autoGenerateOnSave` (저장 시 AI 노트 자동 생성)
+
+## 4. LLM 파이프라인 상세
+
+- 입력: 정렬된 로그 이벤트(`file_save`, `decision`, `bugfix`, `ai_note`)
+- BaseBlock 생성: 시간/파일/요약/리스크/다음단계 등 최소 메타만 추출 후 필터링
+- **Reasoning 단계** ([src/aiClient.ts](src/aiClient.ts))
+  - Prompt: `REPORT_REASONING_PROMPT` (엄격한 JSON 스키마, 한국어 사고 과정 유도)
+  - 모델: `report.reasoningModel` (Reasoning에 특화된 고성능 모델 권장)
+  - 출력: `ReasoningJson.blocks[]` (의도, 문제 배경, 대안 비교, 개념 함정, 트레이드오프 등 심층 분석 데이터)
+- **Markdown 렌더** ([src/report.ts](src/report.ts))
+  - TypeScript 템플릿 엔진 사용: LLM이 생성한 JSON 데이터를 기반으로 "친절하고 상세한 한국어 학습지" 스타일로 변환
+  - 특징: 
+    - 번호 매기기(1, 2, 3...)를 통한 구조화된 서술
+    - '왜 선택했나요?', '대안 비교', '개념 주의점' 등 교육적 가치 강조
+    - 전체 요약 섹션 및 액션 가능한 체크리스트 포함
+- 에러 처리: API Key 부재 또는 JSON 파싱 실패 시 VS Code 알림 표시
+
+## 5. 데이터 스키마 (주요 이벤트)
+
+- `file_save`: `{ addedLines, removedLines, filePath, languageId, branch }`
+- `decision` / `bugfix`: `{ note, filePath?, line?, branch }`
+- `ai_note`: `{ workType, mainGoal, changeSummary, importantFunctions[], risks?, nextSteps? }`
+- `llm_call`: `{ tool, argsSummary }` (미래 확장용)
+
+## 6. 코드베이스 요약
+
+| 파일 | 역할 |
 | :--- | :--- |
-| **`extension.ts`** | **진입점**. 명령어 등록, 이벤트 리스너(저장 감지) 연결, 설정 로드. |
-| **`logging.ts`** | **Layer A**. 파일 시스템 I/O, Diff 알고리즘, 세션 관리. |
-| **`aiClient.ts`** | **AI 클라이언트**. Provider(OpenAI/Gemini/DeepSeek) 연동, 프롬프트 관리. |
-| **`report.ts`** | **Layer B**. 요약 리포트 생성(Markdown 변환), 한글화/포맷팅 담당. |
-| **`webview.ts`** | **뷰어**. 생성된 리포트를 표시하는 Webview 패널 및 CSS/Script 주입. |
+| [src/extension.ts](src/extension.ts) | 명령/이벤트 진입점, 설정 로드, 리포트/AI 노트 실행 흐름 |
+| [src/logging.ts](src/logging.ts) | Layer A: 로그 캡처, diff 계산, JSONL 저장 |
+| [src/aiClient.ts](src/aiClient.ts) | LLM 호출 추상화: reasoning JSON 생성, 프로바이더별 REST 호출/프롬프트 |
+| [src/report.ts](src/report.ts) | Layer B: 로그 로드 → BaseBlock 생성 → reasoning 호출 → 템플릿 Markdown/HTML 생성 |
+| [src/webview.ts](src/webview.ts) | Webview 렌더, Notion 스타일 UI, Export 버튼(HTML 저장 후 인쇄) |
+
+## 7. 사용 흐름 (요약)
+
+1) 파일 저장 → `file_save` 로그 자동 기록
+2) 필요 시 `decision` / `bugfix` / `generateAiNote` 실행 → 로그 축적
+3) `openReport` 실행 → reasoning JSON(단일 LLM) → Markdown 생성 → Webview/HTML 출력
 
 ---
-
-## 4. 설정 (Configuration)
-
-설정은 **"API Key 중앙화"**와 **"목적별 모델 분리"**를 통해 효율성을 극대화했습니다.
-
-### 4.1 Provider 설정 (API Key)
-키는 한 번만 입력하면 모든 기능에서 공유됩니다.
-- `debtcrasher.providers.openai.apiKey`
-- `debtcrasher.providers.gemini.apiKey`
-- `debtcrasher.providers.deepseek.apiKey`
-
-### 4.2 목적별 모델 선택
-- **AI Note**: 자주 실행되므로 속도/비용 최적화 모델 선택.
-  - `debtcrasher.note.provider`: (예: `openai`)
-  - `debtcrasher.note.model`: (예: `gpt-4o-mini`)
-- **Report**: (향후 확장) 고품질 요약을 위한 고성능 모델 선택.
-  - `debtcrasher.report.provider`: (예: `openai`)
-  - `debtcrasher.report.model`: (예: `gpt-4o`)
-
----
-
-## 5. 데이터 스키마 (`ai_note`)
-
-```typescript
-// AI Note 이벤트 구조 (JSON Log)
-{
-  "type": "ai_note",
-  "workType": "feature" | "refactor" | "bugfix" | "test" | "chore",
-  "mainGoal": "로그인 페이지 유효성 검사 로직 개선",
-  "changeSummary": "이메일 정규식 패턴을 강화하고 에러 메시지를 상수화함.",
-  "importantFunctions": ["validateEmail", "showErrorToast"],
-  "risks": "기존 가입자의 이메일 포맷과 호환성 체크 필요",
-  "nextSteps": "비밀번호 복잡도 검사 추가 예정"
-}
-```
-
----
-*Generated by DebtCrasher Agent*
-
-### AI 노트 이벤트 (`ai_note`)
-AI가 생성한 분석 결과가 담기는 핵심 이벤트입니다.
-
-```typescript
-interface AiNoteEvent extends BaseEvent {
-  type: 'ai_note';
-  
-  // 작업 유형
-  workType: 'feature' | 'refactor' | 'bugfix' | 'test' | 'chore';
-  
-  // 핵심 목적 (한 줄 요약)
-  mainGoal: string;
-  
-  // 변경 사항 상세 요약
-  changeSummary: string;
-  
-  // 주요 변경 함수/메서드 목록
-  importantFunctions: string[];
-  
-  // (Optional) 잠재적 리스크
-  risks?: string;
-  
-  // (Optional) 다음 작업 제안
-  nextSteps?: string;
-}
-```
+*Last Updated: 2026-01-12*

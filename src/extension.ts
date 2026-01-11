@@ -71,8 +71,9 @@ export function activate(context: vscode.ExtensionContext): void {
     async () => {
       const config = vscode.workspace.getConfiguration("debtcrasher");
       const provider = config.get<AiProvider>("report.provider", "openai");
-      const model = config.get<string>("report.model", "gpt-4o");
+      const reasoningModelSetting = config.get<string>("report.reasoningModel", "");
       const apiKey = config.get<string>(`providers.${provider}.apiKey`, "");
+      const reasoningModel = reasoningModelSetting || getDefaultReasoningModel(provider);
 
       if (!apiKey) {
         const selection = await vscode.window.showErrorMessage(
@@ -92,7 +93,7 @@ export function activate(context: vscode.ExtensionContext): void {
             title: "DebtCrasher: 타임라인 학습지 생성 중...",
             cancellable: false
           },
-          () => generateReport(workspaceRoot, { provider, apiKey, model })
+          () => generateReport(workspaceRoot, { provider, apiKey, reasoningModel })
         );
 
         openReportWebview(context, report.markdown, async () => {
@@ -291,6 +292,19 @@ export function activate(context: vscode.ExtensionContext): void {
     saveSubscription,
     openSubscription
   );
+}
+
+function getDefaultReasoningModel(provider: AiProvider): string {
+  switch (provider) {
+    case "openai":
+      return "gpt-4o";
+    case "gemini":
+      return "gemini-1.5-pro";
+    case "deepseek":
+      return "deepseek-chat";
+    default:
+      return "gpt-4o";
+  }
 }
 
 export function deactivate(): void {

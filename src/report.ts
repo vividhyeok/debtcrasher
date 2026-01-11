@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
-import { ensureDirectories, readLogEvents, LogEvent, BaseEvent } from "./logging";
-import { AiProvider, generateReportBlocks, renderBlocksToMarkdown, ReportBlock } from "./aiClient";
+import { ensureDirectories, readLogEvents, LogEvent } from "./logging";
+import { AiProvider, BaseBlock, ReasoningJson, generateReportReasoning } from "./aiClient";
 
 export type GeneratedReport = {
   markdown: string;
@@ -11,7 +11,7 @@ export type GeneratedReport = {
 export type ReportGenerationOptions = {
   provider: AiProvider;
   apiKey: string;
-  model: string;
+  reasoningModel: string;
 };
 
 // -------------------------------------------------------------------------
@@ -51,24 +51,20 @@ export async function generateReport(
   if (relevantEvents.length === 0) {
     timelineMarkdown = "기록된 이벤트가 없습니다. 새로운 개발 로그를 남겨보세요.";
   } else {
-    const chunks = chunkEventsByDate(relevantEvents);
-    const blocks: ReportBlock[] = [];
+    const baseBlocks = relevantEvents
+      .map((event) => toBaseBlock(event))
+      .filter((block): block is BaseBlock => Boolean(block));
 
-    for (const chunk of chunks) {
-      const chunkBlocks = await generateReportBlocks(
-        options.provider,
-        options.apiKey,
-        options.model,
-        chunk.events,
-        chunk.label
-      );
-      blocks.push(...chunkBlocks);
-    }
-
-    if (blocks.length === 0) {
+    if (!baseBlocks.length) {
       timelineMarkdown = "요약 블록을 생성하지 못했습니다. 로그 내용을 확인해 주세요.";
     } else {
-      timelineMarkdown = await renderTimelineMarkdown(options, blocks);
+      const reasoning = await generateReportReasoning(
+        options.provider,
+        options.apiKey,
+        options.reasoningModel,
+        baseBlocks
+      );
+      timelineMarkdown = renderReasoningToMarkdown(reasoning);
     }
   }
 
@@ -85,55 +81,148 @@ function formatTimestamp(isoString: string): string {
   return date.toISOString().replace("T", " ").substring(0, 16);
 }
 
-type EventChunk = {
-  label: string;
-  events: BaseEvent[];
-};
+function toBaseBlock(event: LogEvent): BaseBlock | null {
+  const file = event.filePath ?? "project";
+  const time = formatTimestamp(event.timestamp);
 
-/**
- * Groups events by date to keep LLM chunks stable.
- */
-function chunkEventsByDate(events: BaseEvent[]): EventChunk[] {
-  const chunks = new Map<string, BaseEvent[]>();
-  for (const event of events) {
-    const key = event.timestamp.slice(0, 10);
-    if (!chunks.has(key)) {
-      chunks.set(key, []);
-    }
-    chunks.get(key)?.push(event);
+  if (event.type === "ai_note") {
+    return {
+      time,
+      file,
+      workType: event.workType,
+      mainGoal: event.mainGoal,
+      changeSummary: event.changeSummary,
+      importantFunctions: event.importantFunctions,
+      risks: event.risks,
+      nextSteps: event.nextSteps
+    };
   }
 
-  return Array.from(chunks.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([label, chunkEvents]) => ({
-      label,
-      events: chunkEvents
-    }));
+  if (event.type === "decision") {
+    return {
+      time,
+      file,
+      workType: "chore",
+      mainGoal: "Decision memo",
+      changeSummary: event.note
+    };
+  }
+
+  if (event.type === "bugfix") {
+    return {
+      time,
+      file,
+      workType: "bugfix",
+      mainGoal: "Bugfix note",
+      changeSummary: event.note
+    };
+  }
+
+  if (event.type === "file_save") {
+    return {
+      time,
+      file,
+      workType: "chore",
+      mainGoal: "File save",
+      changeSummary: `Saved (+${event.addedLines}/-${event.removedLines})`
+    };
+  }
+
+  return null;
 }
 
-/**
- * Renders timeline blocks into Markdown in stable chunk sizes.
- */
-async function renderTimelineMarkdown(
-  options: ReportGenerationOptions,
-  blocks: ReportBlock[]
-): Promise<string> {
-  const chunkSize = 30;
-  const markdownParts: string[] = [];
+function renderReasoningToMarkdown(reasoning: ReasoningJson): string {
+  const lines: string[] = [];
 
-  for (let i = 0; i < blocks.length; i += chunkSize) {
-    const slice = blocks.slice(i, i + chunkSize);
-    const markdown = await renderBlocksToMarkdown(
-      options.provider,
-      options.apiKey,
-      options.model,
-      slice,
-      false
-    );
-    markdownParts.push(markdown.trim());
+  if (reasoning.blocks.length) {
+    lines.push(`## 전체 요약 (총 ${reasoning.blocks.length}개 작업)`);
+    lines.push("1) 아래 타임라인은 각 파일/작업 단위로 정리되었습니다.");
+    lines.push("2) ‘왜 이렇게 했나’와 ‘대안’ 섹션을 먼저 읽으면 맥락 파악이 빠릅니다.");
+    lines.push("3) ‘다음 번 메모/체크리스트’는 바로 재사용 가능한 행동 가이드입니다.");
+    lines.push("4) 필요하면 각 섹션을 복사해 팀 위키/이슈 코멘트에 붙여넣어 재활용하세요.");
+    lines.push("");
   }
 
-  return markdownParts.join("\n\n");
+  let index = 1;
+  for (const block of reasoning.blocks) {
+    const file = block.file || "project";
+    lines.push(`## ${index}. ${file} (${block.time})`);
+    lines.push(`- 핵심 한 줄: ${block.oneLineSummary}`);
+    lines.push(`- 배경/문제: ${block.problem}`);
+
+    // 1. 무엇을 했나요?
+    lines.push("1) 무엇을 했나요?");
+    if (block.behavior.length) {
+      for (const item of block.behavior) {
+        lines.push(`   - ${item}`);
+      }
+    } else {
+      lines.push("   - (기록된 행동이 없습니다. 간단히 적어두면 다음 회고에 도움됩니다.)");
+    }
+
+    // 2. 왜 이렇게 선택했나요? + 대안
+    lines.push("2) 왜 이렇게 선택했나요?");
+    if (block.whyChosen.length) {
+      for (const reason of block.whyChosen) {
+        lines.push(`   - ${reason}`);
+      }
+    } else {
+      lines.push("   - (선택 근거가 비어 있습니다. 다음에는 의도/제약을 한 줄로 남겨보세요.)");
+    }
+
+    if (block.alternatives.length) {
+      lines.push("   - 고려한 대안과 비교:");
+      for (const alt of block.alternatives) {
+        const pros = alt.pros.length ? `장점: ${alt.pros.join(", ")}` : "장점: (기록 없음)";
+        const cons = alt.cons.length ? `단점: ${alt.cons.join(", ")}` : "단점: (기록 없음)";
+        const joined = [pros, cons].filter(Boolean).join(" | ");
+        lines.push(`     • ${alt.name}${joined ? ` (${joined})` : ""}`);
+      }
+    }
+
+    // 3. 개념/주의 포인트
+    lines.push("3) 관련 개념/주의 포인트:");
+    if (block.concepts.length) {
+      for (const concept of block.concepts) {
+        const pitfalls = concept.pitfalls.length ? `함정: ${concept.pitfalls.join("; ")}` : "함정: (없음)";
+        lines.push(
+          `   - ${concept.name}: ${concept.whatItIs} | 왜 중요?: ${concept.whyRelevantHere} | ${pitfalls}`
+        );
+      }
+    } else {
+      lines.push("   - (기록된 개념이 없습니다. 핵심 개념을 1~2개만 적어도 이후 복습에 큰 도움.)");
+    }
+
+    // 4. 트레이드오프/리스크
+    lines.push("4) 트레이드오프/리스크:");
+    if (block.tradeoffs.length) {
+      for (const tradeoff of block.tradeoffs) {
+        lines.push(`   - ${tradeoff}`);
+      }
+    } else {
+      lines.push("   - (위험/절충점이 비어 있습니다. 성능/안정성/시간 중 무엇을 희생했는지 짧게 남겨두세요.)");
+    }
+
+    // 5. 다음 번 메모/체크리스트
+    lines.push("5) 다음 번 메모/체크리스트:");
+    if (block.rememberThis.length) {
+      for (const tip of block.rememberThis) {
+        lines.push(`   - ${tip}`);
+      }
+    } else {
+      lines.push("   - (다음에 바로 재사용할 팁을 1~2줄 적어두면 회귀 시 빠르게 꺼낼 수 있습니다.)");
+    }
+
+    // 6. 짧은 회고 메모
+    lines.push("6) 짧은 회고 메모:");
+    lines.push("   - 위의 의도와 대안, 개념을 다시 보면 비슷한 상황에서 의사결정을 복원하기 쉽습니다.");
+    lines.push("   - 필요하면 이 블록 전체를 팀 문서/이슈에 붙여넣어 공유하세요.");
+
+    lines.push("");
+    index += 1;
+  }
+
+  return lines.join("\n").trim();
 }
 
 /**

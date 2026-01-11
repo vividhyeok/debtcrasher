@@ -1,5 +1,4 @@
 import * as https from "https";
-import { BaseEvent } from "./logging";
 
 export type AiProvider = "none" | "openai" | "gemini" | "deepseek";
 
@@ -23,14 +22,46 @@ export type AiNoteRequest = {
   diffSnippet: string;
 };
 
-export type ReportBlock = {
-  time: string;
-  file?: string;
-  title: string;
-  summary: string;
-  details: string[];
+export type BaseBlock = {
+  time: string; // ISO string
+  file: string;
+  workType?: WorkType;
+  mainGoal?: string;
+  changeSummary?: string;
+  importantFunctions?: string[];
   risks?: string;
   nextSteps?: string;
+  codeSnippet?: string;
+};
+
+export type ConceptInfo = {
+  name: string;
+  whatItIs: string;
+  whyRelevantHere: string;
+  pitfalls: string[];
+};
+
+export type AlternativeInfo = {
+  name: string;
+  pros: string[];
+  cons: string[];
+};
+
+export type ReasoningBlock = {
+  time: string;
+  file: string;
+  oneLineSummary: string;
+  problem: string;
+  behavior: string[];
+  concepts: ConceptInfo[];
+  alternatives: AlternativeInfo[];
+  whyChosen: string[];
+  tradeoffs: string[];
+  rememberThis: string[];
+};
+
+export type ReasoningJson = {
+  blocks: ReasoningBlock[];
 };
 
 const SYSTEM_PROMPT = [
@@ -48,43 +79,78 @@ const SYSTEM_PROMPT = [
   "항상 위 스키마의 키만 사용하고, JSON 객체 하나만 출력해라."
 ].join("\n");
 
-const REPORT_BLOCK_PROMPT = [
-  "너는 개발 로그를 기반으로 시간순 학습지 블록을 만드는 도우미다.",
-  "반드시 JSON만 출력해라. JSON 외의 텍스트를 절대 쓰지 마라.",
-  "스키마:",
+const REPORT_REASONING_PROMPT = [
+  "당신은 시니어 소프트웨어 엔지니어이자 기술 교육자입니다.",
+  "",
+  "당신에게 전달되는 것은 BaseBlock 배열입니다.",
+  "BaseBlock에는 다음과 같은 \"사실 정보\"만 들어 있습니다:",
+  "- 파일명",
+  "- 타임스탬프",
+  "- workType (feature/refactor/bugfix/test/chore)",
+  "- mainGoal",
+  "- changeSummary",
+  "- importantFunctions",
+  "- risks",
+  "- nextSteps",
+  "- codeSnippet(부분 코드가 들어올 수 있음)",
+  "",
+  "당신의 작업:",
+  "각 BaseBlock을 기반으로 개발자의 생각, 선택 배경, 기술적 개념, 대안 비교, 트레이드오프를 확장한",
+  "\"학습지용 회고 JSON\"을 생성하는 것입니다.",
+  "자연어 문단을 직접 작성하지 말고, 아래 JSON 형식만 출력하세요.",
+  "",
+  "각 블록에서 분석해야 할 항목:",
+  "1. 개발자가 이 시점에서 달성하려고 한 목표(의도).",
+  "2. 변경 전 어떤 문제가 있었는지.",
+  "3. 현재 선택한 해결 방식이 합리적인 이유.",
+  "4. 가능한 대안 2~3개와 각각의 장점/단점.",
+  "5. 여러 대안 중 해당 방식을 선택한 이유(추론 가능).",
+  "6. 해당 코드/파일에서 자연스럽게 등장하는 핵심 개념(예: 한글 유니코드 조합, PyQt 이벤트 루프, GUI 아키텍처, diff 기반 로깅 등).",
+  "7. 각 개념에 대해:",
+  "   - 개념 설명",
+  "   - 이 상황에서 왜 중요한지",
+  "   - 초보자가 흔히 겪는 실수 또는 함정",
+  "8. 이 변경으로 인해 생긴 트레이드오프(위험/손실/절충점).",
+  "9. 이후 비슷한 작업을 할 때 기억하면 좋은 ‘다음번을 위한 팁’.",
+  "",
+  "출력 JSON 형식:",
   "{",
   "  \"blocks\": [",
   "    {",
-  "      \"time\": \"HH:MM\",",
-  "      \"file\": \"file/path.ext\" (optional),",
-  "      \"title\": \"짧은 제목\",",
-  "      \"summary\": \"한 문장 요약\",",
-  "      \"details\": [\"핵심 행동/변경 요약\", \"의도 또는 배경\", \"리스크 또는 다음 단계\"],",
-  "      \"risks\": \"optional string\",",
-  "      \"nextSteps\": \"optional string\"",
+  "      \"time\": \"...\",",
+  "      \"file\": \"...\",",
+  "      \"oneLineSummary\": \"...\",",
+  "      \"problem\": \"...\",",
+  "      \"behavior\": [...],",
+  "      \"concepts\": [",
+  "        {",
+  "          \"name\": \"...\",",
+  "          \"whatItIs\": \"...\",",
+  "          \"whyRelevantHere\": \"...\",",
+  "          \"pitfalls\": [...]",
+  "        }",
+  "      ],",
+  "      \"alternatives\": [",
+  "        {",
+  "          \"name\": \"...\",",
+  "          \"pros\": [...],",
+  "          \"cons\": [...]",
+  "        }",
+  "      ],",
+  "      \"whyChosen\": [...],",
+  "      \"tradeoffs\": [...],",
+  "      \"rememberThis\": [...]",
   "    }",
   "  ]",
   "}",
-  "시간은 로그 timestamp를 HH:MM 형식으로 변환한다.",
-  "file이 명확하지 않으면 생략하거나 \"프로젝트\"로 둔다.",
-  "blocks는 시간순으로 정렬한다."
-].join("\n");
-
-const REPORT_MARKDOWN_PROMPT = [
-  "너는 개발 로그 타임라인 학습지를 작성하는 도우미다.",
-  "아래 JSON blocks를 기반으로 한국어 Markdown만 출력해라.",
-  "출력은 섹션 없이 시간순 타임라인 블록만 작성한다.",
-  "summary와 details를 반영해 학습지 스타일의 문장을 만든다.",
-  "첫 문장에서 title을 자연스럽게 녹여라.",
-  "각 블록 형식:",
-  "## 🕒 {time} – {file}",
-  "한두 문장으로 당시 의도와 맥락을 설명한다.",
-  "- 변경 요약: ...",
-  "- 관련 함수: ... (없으면 생략 가능)",
-  "- 리스크: ... (없으면 생략 가능)",
-  "- 다음 단계: ... (없으면 생략 가능)",
-  "블록 사이에는 빈 줄을 둔다.",
-  "불필요한 머리말, 섹션 제목, 추가 설명을 쓰지 마라."
+  "",
+  "규칙:",
+  "- 모든 텍스트는 한국어로 작성합니다 (영어 표현이 들어가지 않도록 합니다).",
+  "- 각 항목은 충분히 길고 친절하게, 학습자가 바로 이해할 수 있게 구체적으로 적습니다.",
+  "- 번호/리스트를 활용해 구조를 명확히 하고, 가능하면 2~3개 이상의 세부 bullet을 넣습니다.",
+  "- 근거가 충분하면 추론을 사용해도 좋습니다.",
+  "- 불필요하게 과장하거나 장황하게 적지 말고, 학습자 중심으로 가치 있는 정보만 넣으세요.",
+  "- BaseBlock에 없는 내용은 지어내지 말되, 상황상 자연스러운 추론은 허용됩니다."
 ].join("\n");
 
 /**
@@ -111,48 +177,43 @@ export async function generateAiNote(
 }
 
 /**
- * Generates report timeline blocks from structured events.
+ * Generates reasoning JSON (single LLM call) from BaseBlock timeline.
  */
-export async function generateReportBlocks(
+export async function generateReportReasoning(
   provider: AiProvider,
   apiKey: string,
   model: string,
-  events: BaseEvent[],
-  chunkLabel: string
-): Promise<ReportBlock[]> {
-  const prompt = buildReportBlockPrompt(events, chunkLabel);
+  baseBlocks: BaseBlock[]
+): Promise<ReasoningJson> {
+  const userPrompt = JSON.stringify({ blocks: baseBlocks }, null, 2);
 
   switch (provider) {
-    case "openai":
-      return callOpenAiReportBlocks(apiKey, model, prompt);
-    case "gemini":
-      return callGeminiReportBlocks(apiKey, model, prompt);
-    case "deepseek":
-      return callDeepSeekReportBlocks(apiKey, model, prompt);
-    default:
-      throw new Error("Unsupported AI provider.");
-  }
-}
-
-/**
- * Renders report blocks into timeline Markdown.
- */
-export async function renderBlocksToMarkdown(
-  provider: AiProvider,
-  apiKey: string,
-  model: string,
-  blocks: ReportBlock[],
-  includeHeader: boolean
-): Promise<string> {
-  const prompt = buildReportMarkdownPrompt(blocks, includeHeader);
-
-  switch (provider) {
-    case "openai":
-      return callOpenAiMarkdown(apiKey, model, prompt);
-    case "gemini":
-      return callGeminiMarkdown(apiKey, model, prompt);
-    case "deepseek":
-      return callDeepSeekMarkdown(apiKey, model, prompt);
+    case "openai": {
+      const content = await callOpenAiText(apiKey, model || "gpt-4o", REPORT_REASONING_PROMPT, userPrompt);
+      return parseReasoningJson(content);
+    }
+    case "gemini": {
+      const modelName = model || "gemini-1.5-pro";
+      const body = {
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: `${REPORT_REASONING_PROMPT}\n\n${userPrompt}` }]
+          }
+        ]
+      };
+      const response = await postJson(
+        `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
+        { "Content-Type": "application/json" },
+        body
+      );
+      const content = response?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+      return parseReasoningJson(content);
+    }
+    case "deepseek": {
+      const content = await callDeepSeekText(apiKey, model || "deepseek-chat", REPORT_REASONING_PROMPT, userPrompt);
+      return parseReasoningJson(content);
+    }
     default:
       throw new Error("Unsupported AI provider.");
   }
@@ -181,26 +242,41 @@ function buildUserPrompt(request: AiNoteRequest): string {
   ].join("\n");
 }
 
-function buildReportBlockPrompt(events: BaseEvent[], chunkLabel: string): string {
-  const eventLines = events.map(formatEventLine).join("\n");
-  return [
-    `chunk: ${chunkLabel}`,
-    "events:",
-    eventLines || "(no events)"
-  ].join("\n");
-}
+function parseReasoningJson(content: unknown): ReasoningJson {
+  if (typeof content !== "string") {
+    throw new Error("AI response was empty.");
+  }
 
-function buildReportMarkdownPrompt(blocks: ReportBlock[], includeHeader: boolean): string {
-  const payload = JSON.stringify({ blocks }, null, 2);
-  const headerInstruction = includeHeader
-    ? "출력 맨 위에 별도의 섹션 제목을 추가하지 마라."
-    : "출력은 타임라인 블록만 작성한다.";
+  const parsed = safeParseJson(content);
+  const blocks = Array.isArray(parsed) ? parsed : parsed?.blocks;
+  if (!Array.isArray(blocks)) {
+    throw new Error("Reasoning JSON schema mismatch.");
+  }
 
-  return [
-    headerInstruction,
-    "",
-    payload
-  ].join("\n");
+  const validBlocks = blocks
+    .map((block) => ({
+      time: block.time,
+      file: block.file,
+      oneLineSummary: block.oneLineSummary,
+      problem: block.problem,
+      behavior: Array.isArray(block.behavior) ? block.behavior : [],
+      concepts: Array.isArray(block.concepts) ? block.concepts : [],
+      alternatives: Array.isArray(block.alternatives) ? block.alternatives : [],
+      whyChosen: Array.isArray(block.whyChosen) ? block.whyChosen : [],
+      tradeoffs: Array.isArray(block.tradeoffs) ? block.tradeoffs : [],
+      rememberThis: Array.isArray(block.rememberThis) ? block.rememberThis : []
+    }))
+    .filter((block) =>
+      typeof block.time === "string" &&
+      typeof block.oneLineSummary === "string" &&
+      typeof block.problem === "string"
+    );
+
+  if (validBlocks.length === 0) {
+    throw new Error("No valid reasoning blocks found in AI response.");
+  }
+
+  return { blocks: validBlocks };
 }
 
 async function callOpenAi(apiKey: string, model: string, userPrompt: string): Promise<AiNotePayload> {
@@ -226,23 +302,6 @@ async function callOpenAi(apiKey: string, model: string, userPrompt: string): Pr
   return parseAiNotePayload(content);
 }
 
-async function callOpenAiReportBlocks(
-  apiKey: string,
-  model: string,
-  userPrompt: string
-): Promise<ReportBlock[]> {
-  const content = await callOpenAiText(apiKey, model || "gpt-4o", REPORT_BLOCK_PROMPT, userPrompt);
-  return parseReportBlocks(content);
-}
-
-async function callOpenAiMarkdown(
-  apiKey: string,
-  model: string,
-  userPrompt: string
-): Promise<string> {
-  return callOpenAiText(apiKey, model || "gpt-4o", REPORT_MARKDOWN_PROMPT, userPrompt);
-}
-
 async function callGemini(apiKey: string, model: string, userPrompt: string): Promise<AiNotePayload> {
   const modelName = model || "gemini-1.5-flash"; // Fallback
   const body = {
@@ -264,55 +323,6 @@ async function callGemini(apiKey: string, model: string, userPrompt: string): Pr
 
   const content = response?.candidates?.[0]?.content?.parts?.[0]?.text;
   return parseAiNotePayload(content);
-}
-
-async function callGeminiReportBlocks(
-  apiKey: string,
-  model: string,
-  userPrompt: string
-): Promise<ReportBlock[]> {
-  const modelName = model || "gemini-1.5-pro";
-  const body = {
-    contents: [
-      {
-        role: "user",
-        parts: [{ text: `${REPORT_BLOCK_PROMPT}\n\n${userPrompt}` }]
-      }
-    ]
-  };
-
-  const response = await postJson(
-    `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
-    { "Content-Type": "application/json" },
-    body
-  );
-
-  const content = response?.candidates?.[0]?.content?.parts?.[0]?.text;
-  return parseReportBlocks(content);
-}
-
-async function callGeminiMarkdown(
-  apiKey: string,
-  model: string,
-  userPrompt: string
-): Promise<string> {
-  const modelName = model || "gemini-1.5-pro";
-  const body = {
-    contents: [
-      {
-        role: "user",
-        parts: [{ text: `${REPORT_MARKDOWN_PROMPT}\n\n${userPrompt}` }]
-      }
-    ]
-  };
-
-  const response = await postJson(
-    `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
-    { "Content-Type": "application/json" },
-    body
-  );
-
-  return response?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 }
 
 async function callDeepSeek(apiKey: string, model: string, userPrompt: string): Promise<AiNotePayload> {
@@ -338,23 +348,6 @@ async function callDeepSeek(apiKey: string, model: string, userPrompt: string): 
   return parseAiNotePayload(content);
 }
 
-async function callDeepSeekReportBlocks(
-  apiKey: string,
-  model: string,
-  userPrompt: string
-): Promise<ReportBlock[]> {
-  const content = await callDeepSeekText(apiKey, model || "deepseek-chat", REPORT_BLOCK_PROMPT, userPrompt);
-  return parseReportBlocks(content);
-}
-
-async function callDeepSeekMarkdown(
-  apiKey: string,
-  model: string,
-  userPrompt: string
-): Promise<string> {
-  return callDeepSeekText(apiKey, model || "deepseek-chat", REPORT_MARKDOWN_PROMPT, userPrompt);
-}
-
 function parseAiNotePayload(content: unknown): AiNotePayload {
   if (typeof content !== "string") {
     throw new Error("AI response was empty.");
@@ -372,41 +365,6 @@ function parseAiNotePayload(content: unknown): AiNotePayload {
     const jsonText = trimmed.slice(start, end + 1);
     return JSON.parse(jsonText) as AiNotePayload;
   }
-}
-
-function parseReportBlocks(content: unknown): ReportBlock[] {
-  if (typeof content !== "string") {
-    throw new Error("AI response was empty.");
-  }
-
-  const parsed = safeParseJson(content);
-  const blocks = Array.isArray(parsed) ? parsed : parsed?.blocks;
-  if (!Array.isArray(blocks)) {
-    throw new Error("Report blocks JSON schema mismatch.");
-  }
-
-  const validBlocks = blocks.filter((block) => {
-    return (
-      block &&
-      typeof block.time === "string" &&
-      typeof block.title === "string" &&
-      typeof block.summary === "string"
-    );
-  }) as ReportBlock[];
-
-  if (validBlocks.length === 0) {
-    throw new Error("No valid report blocks found in AI response.");
-  }
-
-  return validBlocks.map((block) => ({
-    time: block.time,
-    file: block.file,
-    title: block.title,
-    summary: block.summary,
-    details: Array.isArray(block.details) ? block.details : [],
-    risks: block.risks,
-    nextSteps: block.nextSteps
-  }));
 }
 
 function safeParseJson(content: string): any {
@@ -430,37 +388,6 @@ function safeParseJson(content: string): any {
 
     throw new Error("AI response did not include JSON.");
   }
-}
-
-function formatEventLine(event: BaseEvent): string {
-  const base = `[${event.timestamp}] (${event.type})`;
-  const filePart = event.filePath ? ` file=${event.filePath}` : "";
-  const branchPart = event.branch ? ` branch=${event.branch}` : "";
-
-  if (event.type === "file_save") {
-    const fileSave = event as any;
-    return `${base}${filePart} +${fileSave.addedLines}/-${fileSave.removedLines} language=${fileSave.languageId}${branchPart}`;
-  }
-
-  if (event.type === "decision") {
-    const decision = event as any;
-    return `${base}${filePart} note=${decision.note}${branchPart}`;
-  }
-
-  if (event.type === "bugfix") {
-    const bugfix = event as any;
-    return `${base}${filePart} note=${bugfix.note}${branchPart}`;
-  }
-
-  if (event.type === "ai_note") {
-    const aiNote = event as any;
-    const functions = Array.isArray(aiNote.importantFunctions)
-      ? aiNote.importantFunctions.join(", ")
-      : "";
-    return `${base}${filePart} goal=${aiNote.mainGoal} summary=${aiNote.changeSummary} functions=${functions} risks=${aiNote.risks ?? ""} next=${aiNote.nextSteps ?? ""}${branchPart}`;
-  }
-
-  return `${base}${filePart}${branchPart}`;
 }
 
 async function callOpenAiText(

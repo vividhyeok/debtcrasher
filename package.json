@@ -71,13 +71,13 @@
           "type": "string",
           "enum": ["openai", "gemini", "deepseek"],
           "default": "openai",
-          "description": "Provider for Report generation (optimized for quality)"
+          "description": "Provider for report reasoning JSON generation"
         },
-        "debtcrasher.report.model": {
+        "debtcrasher.report.reasoningModel": {
           "type": "string",
-          "default": "gpt-4o",
-          "description": "Model for Report generation (e.g. gpt-4o, gemini-1.5-pro)",
-          "markdownDescription": "Model for Report generation.\n\n**Recommended (High Quality):**\n- OpenAI: `gpt-4o`\n- Gemini: `gemini-1.5-pro`"
+          "default": "",
+          "description": "Single model for reasoning JSON (e.g. gpt-4o, gemini-1.5-pro, deepseek-chat)",
+          "markdownDescription": "단일 모델로 Reasoning JSON을 생성합니다. 비워두면 provider별 기본값을 사용합니다.\n\n**추천:**\n- OpenAI: `gpt-4o`\n- Gemini: `gemini-1.5-pro`\n- DeepSeek: `deepseek-chat`"
         },
         "debtcrasher.autoGenerateOnSave": {
           "type": "boolean",
